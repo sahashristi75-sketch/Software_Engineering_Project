@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enterprise Inventory Engine</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-gray-100 p-6">
+
+    <div class="max-w-6xl mx-auto space-y-6">
+        
+        <header class="bg-blue-600 p-4 rounded-xl text-white shadow flex justify-between items-center">
+            <h1 class="text-2xl font-bold">📊 Enterprise Inventory Engine</h1>
+            <button onclick="exportToCSV()" class="bg-white text-blue-600 hover:bg-gray-100 text-sm font-bold px-4 py-2 rounded-lg shadow transition">
+                📥 Export Spreadsheet (CSV)
+            </button>
+        </header>
+
+        <div id="globalNotificationBar" class="hidden bg-amber-50 border-l-4 border-amber-500 p-4 rounded-r-xl shadow-sm space-y-1">
+            <h4 class="font-bold text-amber-800 flex items-center gap-2">⚠️ Critical Warehouse Low-Stock Alerts</h4>
+            <ul id="notificationList" class="list-disc list-inside text-sm text-amber-700 font-medium">
+                </ul>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            
+            <div class="bg-white p-6 rounded-xl shadow-sm border col-span-1">
+                <h3 class="text-lg font-bold mb-4 text-gray-700">Add New Inventory Item</h3>
+                <form id="itemForm" class="space-y-3">
+                    <div>
+                        <label class="block text-sm text-gray-600">SKU Code</label>
+                        <input type="text" id="sku" required class="w-full border p-2 rounded">
+                    </div>
+                    <div>
+                        <label class="block text-sm text-gray-600">Product Name</label>
+                        <input type="text" id="name" required class="w-full border p-2 rounded">
+                    </div>
+                    <div>
+                        <label class="block text-sm text-gray-600">Unit Price (&#8377;)</label>
+                        <input type="number" step="0.01" id="price" required class="w-full border p-2 rounded">
+                    </div>
+                    <div>
+                        <label class="block text-sm text-gray-600">Initial Quantity</label>
+                        <input type="number" id="qty" required class="w-full border p-2 rounded">
+                    </div>
+                    <div>
+                        <label class="block text-sm text-gray-600">Min Alert Threshold Floor</label>
+                        <input type="number" id="threshold" value="5" required class="w-full border p-2 rounded font-semibold text-blue-600">
+                    </div>
+                    <button type="submit" class="w-full bg-blue-600 text-white p-2 rounded hover:bg-blue-700 font-semibold">Save Item</button>
+                </form>
+            </div>
+
+            <div class="bg-white p-6 rounded-xl shadow-sm border col-span-1">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-bold text-gray-700">Sales Volume</h3>
+                    <select id="timeFilter" onchange="fetchChartData()" class="border text-xs rounded p-1 bg-gray-50 font-semibold text-gray-600">
+                        <option value="all">All-Time</option>
+                        <option value="today">Today Only</option>
+                    </select>
+                </div>
+                <div style="height: 250px; width: 100%; position: relative;">
+                    <canvas id="salesChart"></canvas>
+                </div>
+            </div>
+
+            <div class="bg-white p-6 rounded-xl shadow-sm border col-span-1 flex flex-col justify-between">
+                <div>
+                    <h3 class="text-lg font-bold text-gray-700 mb-2">🎯 80-20 Rule Analytics</h3>
+                    <p class="text-xs text-gray-400 mb-4 font-medium">Automatic value identification matrix sorting engine</p>
+                    <div id="paretoText" class="text-sm text-gray-600 leading-relaxed font-medium bg-blue-50 p-4 rounded-lg border border-blue-100">
+                        Calculating financial matrix trends...
+                    </div>
+                </div>
+                <div class="mt-4 pt-2 border-t text-[11px] text-gray-400 font-semibold uppercase tracking-wider">
+                    Revenue Concentration Status
+                </div>
+            </div>
+
+        </div>
+
+        <div class="bg-white p-6 rounded-xl shadow-sm border">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-bold text-gray-700">Live Stock Management</h3>
+                <div class="space-x-4 font-semibold text-sm">
+                    <span class="text-gray-500">Total Units: <span id="totalUnits" class="text-gray-800">0</span></span>
+                    <span class="text-gray-500">Total Valuation: <span id="totalValuation" class="text-blue-600">&#8377;0.00</span></span>
+                </div>
+            </div>
+            
+            <table class="w-full text-left border-collapse" id="mainStockTable">
+                <thead>
+                    <tr class="border-b text-gray-400 text-sm">
+                        <th class="pb-2">SKU</th>
+                        <th class="pb-2">Product Name</th>
+                        <th class="pb-2 text-right">Price</th>
+                        <th class="pb-2 text-right">In Stock</th>
+                        <th class="pb-2 text-center">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="inventoryTable" class="divide-y text-gray-700">
+                </tbody>
+            </table>
+        </div>
+
+    </div>
+
+    <script>
+        const API_URL = "http://127.0.0.1:8000";
+        let salesChartInstance = null;
+
+        function updateChart(labels, values) {
+            const canvas = document.getElementById('salesChart');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            if (salesChartInstance) salesChartInstance.destroy();
+
+            if (labels.length === 0) {
+                labels = ["No Sales Record"];
+                values = [0];
+            }
+
+            salesChartInstance = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Units Sold',
+                        data: values,
+                        backgroundColor: '#3b82f6',
+                        borderColor: '#1d4ed8',
+                        borderWidth: 1
+                    }]
+                },
+                options: { responsive: true, maintainAspectRatio: false }
+            });
+        }
+
+        async function fetchChartData() {
+            try {
+                const rangeChoice = document.getElementById("timeFilter").value;
+                const res = await fetch(`${API_URL}/sales-summary?range=${rangeChoice}`);
+                const data = await res.json();
+                updateChart(data.map(i => i.product_name), data.map(i => i.total_sold));
+            } catch (error) { console.error(error); }
+        }
+
+        // NEW CONTROLLER: Fetch and draw the 80/20 metrics insights
+        async function fetchParetoAnalysis() {
+            try {
+                const res = await fetch(`${API_URL}/analytics/pareto`);
+                const data = await res.json();
+                document.getElementById("paretoText").innerHTML = data.summary || data.message;
+            } catch (error) { console.error(error); }
+        }
+
+        async function fetchInventory() {
+            try {
+                const res = await fetch(`${API_URL}/products`);
+                const data = await res.json();
+                const tbody = document.getElementById("inventoryTable");
+                const notifyBar = document.getElementById("globalNotificationBar");
+                const notifyList = document.getElementById("notificationList");
+                
+                tbody.innerHTML = "";
+                notifyList.innerHTML = "";
+                
+                let grandTotalValue = 0;
+                let grandTotalUnits = 0;
+                let criticalCount = 0;
+
+                data.forEach(product => {
+                    grandTotalValue += (product.unit_price * product.quantity_in_stock);
+                    grandTotalUnits += product.quantity_in_stock;
+                    
+                    // FEATURE 1 LOGIC: Check custom limit thresholds dynamically
+                    let rowStyle = "";
+                    let warningFlag = "";
+                    if (product.quantity_in_stock < product.min_threshold) {
+                        rowStyle = "bg-red-50 text-red-700 font-medium";
+                        warningFlag = `⚠️ <span class='text-xs text-red-500 font-bold'>BELOW ${product.min_threshold}</span> `;
+                        
+                        // Inject row-specific warning text notes directly into the top alert block board
+                        criticalCount++;
+                        notifyList.innerHTML += `<li>Product <strong>"${product.product_name}"</strong> (SKU: ${product.sku}) has fallen critical with only <strong>${product.quantity_in_stock}</strong> items left in stock (Target Limit: ${product.min_threshold}).</li>`;
+                    }
+                    
+                    tbody.innerHTML += `
+                        <tr class="hover:bg-gray-50 ${rowStyle}">
+                            <td class="py-3 font-mono text-xs">${product.sku}</td>
+                            <td class="py-3 font-semibold">${product.product_name}</td>
+                            <td class="py-3 text-right">&#8377;${product.unit_price.toFixed(2)}</td>
+                            <td class="py-3 text-right">${warningFlag}${product.quantity_in_stock}</td>
+                            <td class="py-3 text-center space-x-1">
+                                <button onclick="restockItem('${product.sku}')" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-2 py-1 rounded">Restock +1</button>
+                                <button onclick="sellItem('${product.sku}')" class="bg-amber-500 hover:bg-amber-600 text-white text-xs px-2 py-1 rounded">Sell 1</button>
+                                <button onclick="deleteItem('${product.sku}')" class="bg-red-600 hover:bg-red-700 text-white text-xs px-2 py-1 rounded">Delete</button>
+                            </td>
+                        </tr>
+                    `;
+                });
+
+                // Toggle visibility status of global warning note card layout
+                if (criticalCount > 0) {
+                    notifyBar.classList.remove("hidden");
+                } else {
+                    notifyBar.classList.add("hidden");
+                }
+
+                document.getElementById("totalValuation").innerText = `₹${grandTotalValue.toFixed(2)}`;
+                document.getElementById("totalUnits").innerText = grandTotalUnits;
+                
+                fetchChartData(); 
+                fetchParetoAnalysis(); // Always re-calculate financial asset distributions
+            } catch (error) { console.error(error); }
+        }
+
+        document.getElementById("itemForm").addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const payload = {
+                sku: document.getElementById("sku").value,
+                product_name: document.getElementById("name").value,
+                unit_price: parseFloat(document.getElementById("price").value),
+                quantity_in_stock: parseInt(document.getElementById("qty").value),
+                min_threshold: parseInt(document.getElementById("threshold").value) // Included input value string
+            };
+
+            const res = await fetch(`${API_URL}/products`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+
+            if(res.ok) {
+                document.getElementById("itemForm").reset();
+                document.getElementById("threshold").value = "5"; // fallback reset option state value
+                fetchInventory();
+            }
+        });
+
+        async function sellItem(sku) {
+            const res = await fetch(`${API_URL}/products/${sku}/deduct`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ quantity: 1 })
+            });
+            if (res.ok) fetchInventory();
+        }
+
+        async function restockItem(sku) {
+            const res = await fetch(`${API_URL}/products/${sku}/add`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ quantity: 1 })
+            });
+            if (res.ok) fetchInventory();
+        }
+
+        async function deleteItem(sku) {
+            if(confirm("Delete item entirely?")) {
+                const res = await fetch(`${API_URL}/products/${sku}`, { method: "DELETE" });
+                if (res.ok) fetchInventory();
+            }
+        }
+
+        function exportToCSV() {
+            let csvContent = "data:text/csv;charset=utf-8,SKU,Product Name,Price,Quantity\n";
+            const rows = document.querySelectorAll("#inventoryTable tr");
+            rows.forEach(row => {
+                const cols = row.querySelectorAll("td");
+                if (cols.length >= 4) {
+                    csvContent += `"${cols[0].innerText.trim()}","${cols[1].innerText.trim()}","${cols[2].innerText.replace("₹","").trim()}","${cols[3].innerText.replace(/⚠️/g,"").trim()}"\n`;
+                }
+            });
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", "Inventory_Report.csv");
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        
+        }
+
+        fetchInventory();
+    </script>
+</body>
+</html>
